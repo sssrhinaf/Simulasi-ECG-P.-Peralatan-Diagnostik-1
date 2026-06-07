@@ -1,0 +1,142 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks, butter, filtfilt
+from IPython.display import Audio, display
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================
+# FILTER FUNCTIONS
+# ============================
+def low_pass_filter(data, cutoff, fs, order=4):
+    nyquist = fs / 2.0
+    normal_cutoff = cutoff / nyquist
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return filtfilt(b, a, data)
+
+def high_pass_filter(data, cutoff, fs, order=4):
+    nyquist = fs / 2.0
+    normal_cutoff = cutoff / nyquist
+    b, a = butter(order, normal_cutoff, btype='high', analog=False)
+    return filtfilt(b, a, data)
+
+def band_pass_filter(data, low_cutoff, high_cutoff, fs, order=4):
+    nyquist = fs / 2.0
+    low = low_cutoff / nyquist
+    high = high_cutoff / nyquist
+    b, a = butter(order, [low, high], btype='band', analog=False)
+    return filtfilt(b, a, data)
+
+# ============================
+# Simulate ECG (Struktur asli tetap)
+# ============================
+def simulate_ecg(duration=10, fs=500, heart_rate=75, noise_level=0.02, baseline_wander=True):
+    t = np.arange(0, duration, 1/fs)
+    n_samples = len(t)
+    beat_period = 60.0 / heart_rate
+    beat_samples = int(beat_period * fs)
+    beat_t = np.linspace(0, beat_period, beat_samples)
+
+    p      =  0.25 * np.exp(-((beat_t - 0.12)/0.028)**2)
+    q      = -0.15 * np.exp(-((beat_t - 0.22)/0.015)**2)
+    r      =  1.15 * np.exp(-((beat_t - 0.25)/0.012)**2)
+    s      = -0.28 * np.exp(-((beat_t - 0.28)/0.015)**2)
+    t_wave =  0.38 * np.exp(-((beat_t - 0.45)/0.075)**2)
+
+    single_beat = p + q + r + s + t_wave
+    ecg = np.tile(single_beat, int(duration / beat_period) + 2)
+    ecg = ecg[:n_samples]
+
+    if baseline_wander:
+        baseline = (0.08 * np.sin(2 * np.pi * 0.25 * t) + 0.04 * np.sin(2 * np.pi * 0.08 * t))
+        ecg += baseline
+
+    noise = noise_level * np.random.randn(n_samples)
+    ecg += noise
+
+    return t, ecg, fs
+
+# ============================
+# Generate ECG
+# ============================
+t, ecg, fs = simulate_ecg(
+    duration=5,
+    fs=700,
+    heart_rate=80,
+    noise_level=1,
+    baseline_wander=True
+)
+
+# ============================
+# APPLY FILTER
+# ============================
+ecg_filtered = band_pass_filter(ecg, low_cutoff=10, high_cutoff=30, fs=fs, order=4)
+
+# ============================
+# R-peak detection
+# ============================
+min_distance = int(0.4 * fs)
+peaks, _ = find_peaks(ecg_filtered, distance=min_distance,
+                      height=np.mean(ecg_filtered) + 0.6 * np.std(ecg_filtered))
+
+if len(peaks) > 1:
+    bpm = 60.0 / np.mean(np.diff(t[peaks]))
+else:
+    bpm = 0
+
+print(f"Detected R-peaks : {len(peaks)}")
+print(f"Calculated BPM   : {bpm:.1f}")
+
+# ============================
+# MEMBUAT AUDIO BEEP BERDASARKAN PEAK (KODE BARU)
+# ============================
+fs_audio = 44100
+waktu_audio = np.arange(0, 5, 1/fs_audio)   # durasi sesuai ECG
+sinyal_audio = np.zeros(len(waktu_audio))
+
+durasi_beep = 0.08
+t_beep = np.arange(0, durasi_beep, 1/fs_audio)
+beep = np.sin(2 * np.pi * 800 * t_beep) * np.hanning(len(t_beep))
+
+waktu_puncak = t[peaks]   # waktu peak dari ECG
+
+for wp in waktu_puncak:
+    idx_start = int(wp * fs_audio)
+    idx_end = idx_start + len(beep)
+    if idx_end < len(sinyal_audio):
+        sinyal_audio[idx_start:idx_end] += beep
+
+# ============================
+# TAMPILKAN AUDIO
+# ============================
+print("\n" + "="*60)
+print("🎵 AUDIO DETAK JANTUNG BERDASARKAN PEAK")
+print("="*60)
+display(Audio(sinyal_audio, rate=fs_audio, autoplay=False))
+
+# ============================
+# Plot
+# ============================
+plt.figure(figsize=(14, 10))
+
+plt.subplot(3, 1, 1)
+plt.plot(t, ecg, label='Original ECG', color='blue')
+plt.title('Original ECG Signal')
+plt.legend()
+plt.grid(True)
+
+plt.subplot(3, 1, 2)
+plt.plot(t, ecg_filtered, label='Filtered ECG', color='green')
+plt.title('Filtered ECG (Band Pass 0.5 - 40 Hz)')
+plt.legend()
+plt.grid(True)
+
+plt.subplot(3, 1, 3)
+plt.plot(t, ecg_filtered, label='Filtered ECG')
+plt.plot(t[peaks], ecg_filtered[peaks], 'r.', markersize=10, label='Detected Peaks')
+plt.title(f'Filtered ECG with R-Peak Detection (BPM = {bpm:.1f})')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
