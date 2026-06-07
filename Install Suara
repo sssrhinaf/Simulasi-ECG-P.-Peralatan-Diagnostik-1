@@ -1,0 +1,6 @@
+# Install PortAudio (library sistem)
+!apt-get update -qq
+!apt-get install -y portaudio19-dev
+
+# Install sounddevice
+!pip install sounddevice
